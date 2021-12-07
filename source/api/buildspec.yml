@@ -1,0 +1,34 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - apt install jq
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin $REPOSITORY_URI
+      - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - docker pull $REPOSITORY_URI:latest || exit 0
+  build:
+    commands:
+      - echo Build started on `date`
+      - echo Building the Docker image...
+      - docker build -t $REPOSITORY_URI:latest -t $REPOSITORY_URI:$IMAGE_TAG --cache-from $REPOSITORY_URI:latest api/
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Pushing the Docker images...
+      - docker push $REPOSITORY_URI:latest
+      - docker push $REPOSITORY_URI:$IMAGE_TAG
+      - echo Writing definitions files...
+      - aws ecs describe-task-definition --task-definition api | jq '.taskDefinition' > api/taskdef.json
+      - envsubst < api/appspec_template.yaml > api/appspec.yaml
+      - printf '{"ImageURI":"%s"}' ${REPOSITORY_URI}:${IMAGE_TAG} > api/imageDetail.json
+artifacts:
+  base-directory: 'api'
+  discard-paths: yes
+  files:
+    - taskdef.json
+    - appspec.yaml
+    - image*.json
